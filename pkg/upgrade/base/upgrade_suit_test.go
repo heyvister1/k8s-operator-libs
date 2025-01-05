@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION & AFFILIATES
+Copyright 2025 NVIDIA CORPORATION & AFFILIATES
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/base"
-	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/manager/mocks"
+	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/mocks"
 	// +kubebuilder:scaffold:imports
 )
 

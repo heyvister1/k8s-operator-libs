@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION & AFFILIATES
+Copyright 2025 NVIDIA CORPORATION & AFFILIATES
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,9 +23,10 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,6 +41,7 @@ type NodeUpgradeState struct {
 	Node            *corev1.Node
 	DriverPod       *corev1.Pod
 	DriverDaemonSet *appsv1.DaemonSet
+	NodeMaintenance *unstructured.Unstructured
 }
 
 // IsOrphanedPod returns true if Pod is not associated to a DaemonSet
@@ -60,12 +62,21 @@ func NewClusterUpgradeState() ClusterUpgradeState {
 	return ClusterUpgradeState{NodeStates: make(map[string][]*NodeUpgradeState)}
 }
 
+// ProcessNodeStateManager interface is used for abstracting both upgrade modes: inplace,
+// requestor (e.g. maintenance OP)
+// Similar node states are used in both modes, while changes are introduced within ApplyState Process<state>
+// methods to support both modes logic
+type ProcessNodeStateManager interface {
+	ProcessUpgradeRequiredNodes(ctx context.Context,
+		currentClusterState *ClusterUpgradeState, upgradePolicy *v1alpha1.DriverUpgradePolicySpec) error
+	ProcessPostMaintenanceNodes(ctx context.Context,
+		currentClusterState *ClusterUpgradeState) error
+	ProcessUncordonRequiredNodes(
+		ctx context.Context, currentClusterState *ClusterUpgradeState) error
+}
+
 // CommonUpgradeStateManager interface is a unified cluster upgrade abstraction for both upgrade modes
-//
-//nolint:interfacebloat
 type CommonUpgradeStateManager interface {
-	// BuildState builds a point-in-time snapshot of the driver upgrade state in the cluster.
-	BuildState(ctx context.Context, namespace string, driverLabels map[string]string) (*ClusterUpgradeState, error)
 	// GetTotalManagedNodes returns the total count of nodes managed for driver upgrades
 	GetTotalManagedNodes(ctx context.Context, currentState *ClusterUpgradeState) int
 	// GetUpgradesInProgress returns count of nodes on which upgrade is in progress
@@ -113,8 +124,9 @@ type CommonUpgradeManagerImpl struct {
 func NewCommonUpgradeStateManager(
 	log logr.Logger,
 	k8sConfig *rest.Config,
+	scheme *runtime.Scheme,
 	eventRecorder record.EventRecorder) (*CommonUpgradeManagerImpl, error) {
-	k8sClient, err := client.New(k8sConfig, client.Options{Scheme: scheme.Scheme})
+	k8sClient, err := client.New(k8sConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		return &CommonUpgradeManagerImpl{}, fmt.Errorf("error creating k8s client: %v", err)
 	}
@@ -201,92 +213,8 @@ func (m *CommonUpgradeManagerImpl) GetCurrentUnavailableNodes(ctx context.Contex
 	return unavailableNodes
 }
 
-// BuildState builds a point-in-time snapshot of the driver upgrade state in the cluster.
-func (m *CommonUpgradeManagerImpl) BuildState(ctx context.Context, namespace string,
-	driverLabels map[string]string) (*ClusterUpgradeState, error) {
-	m.Log.V(consts.LogLevelInfo).Info("Building state")
-
-	upgradeState := NewClusterUpgradeState()
-
-	daemonSets, err := m.getDriverDaemonSets(ctx, namespace, driverLabels)
-	if err != nil {
-		m.Log.V(consts.LogLevelError).Error(err, "Failed to get driver DaemonSet list")
-		return nil, err
-	}
-
-	m.Log.V(consts.LogLevelDebug).Info("Got driver DaemonSets", "length", len(daemonSets))
-
-	// Get list of driver pods
-	podList := &corev1.PodList{}
-
-	err = m.K8sClient.List(ctx, podList,
-		client.InNamespace(namespace),
-		client.MatchingLabels(driverLabels),
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	filteredPodList := []corev1.Pod{}
-	for _, ds := range daemonSets {
-		dsPods := m.getPodsOwnedbyDs(ds, podList.Items)
-		if int(ds.Status.DesiredNumberScheduled) != len(dsPods) {
-			m.Log.V(consts.LogLevelInfo).Info("Driver DaemonSet has Unscheduled pods", "name", ds.Name)
-			return nil, fmt.Errorf("driver DaemonSet should not have Unscheduled pods")
-		}
-		filteredPodList = append(filteredPodList, dsPods...)
-	}
-
-	// Collect also orphaned driver pods
-	filteredPodList = append(filteredPodList, m.getOrphanedPods(podList.Items)...)
-
-	upgradeStateLabel := GetUpgradeStateLabelKey()
-
-	for i := range filteredPodList {
-		pod := &filteredPodList[i]
-		var ownerDaemonSet *appsv1.DaemonSet
-		if isOrphanedPod(pod) {
-			ownerDaemonSet = nil
-		} else {
-			ownerDaemonSet = daemonSets[pod.OwnerReferences[0].UID]
-		}
-		// Check if pod is already scheduled to a Node
-		if pod.Spec.NodeName == "" && pod.Status.Phase == corev1.PodPending {
-			m.Log.V(consts.LogLevelInfo).Info("Driver Pod has no NodeName, skipping", "pod", pod.Name)
-			continue
-		}
-		nodeState, err := m.buildNodeUpgradeState(ctx, pod, ownerDaemonSet)
-		if err != nil {
-			m.Log.V(consts.LogLevelError).Error(err, "Failed to build node upgrade state for pod", "pod", pod)
-			return nil, err
-		}
-		nodeStateLabel := nodeState.Node.Labels[upgradeStateLabel]
-		upgradeState.NodeStates[nodeStateLabel] = append(
-			upgradeState.NodeStates[nodeStateLabel], nodeState)
-	}
-
-	return &upgradeState, nil
-}
-
-// buildNodeUpgradeState creates a mapping between a node,
-// the driver POD running on them and the daemon set, controlling this pod
-func (m *CommonUpgradeManagerImpl) buildNodeUpgradeState(
-	ctx context.Context, pod *corev1.Pod, ds *appsv1.DaemonSet) (*NodeUpgradeState, error) {
-	node, err := m.NodeUpgradeStateProvider.GetNode(ctx, pod.Spec.NodeName)
-	if err != nil {
-		return nil, fmt.Errorf("unable to get node %s: %v", pod.Spec.NodeName, err)
-	}
-
-	upgradeStateLabel := GetUpgradeStateLabelKey()
-	m.Log.V(consts.LogLevelInfo).Info("Node hosting a driver pod",
-		"node", node.Name, "state", node.Labels[upgradeStateLabel])
-
-	return &NodeUpgradeState{Node: node, DriverPod: pod, DriverDaemonSet: ds}, nil
-}
-
-// getDriverDaemonSets retrieves DaemonSets with given labels and returns UID->DaemonSet map
-func (m *CommonUpgradeManagerImpl) getDriverDaemonSets(ctx context.Context, namespace string,
+// GetDriverDaemonSets retrieves DaemonSets with given labels and returns UID->DaemonSet map
+func (m *CommonUpgradeManagerImpl) GetDriverDaemonSets(ctx context.Context, namespace string,
 	labels map[string]string) (map[types.UID]*appsv1.DaemonSet, error) {
 	// Get list of driver pods
 	daemonSetList := &appsv1.DaemonSetList{}
@@ -307,12 +235,12 @@ func (m *CommonUpgradeManagerImpl) getDriverDaemonSets(ctx context.Context, name
 	return daemonSetMap, nil
 }
 
-// getPodsOwnedbyDs returns a list of the pods owned by the specified DaemonSet
-func (m *CommonUpgradeManagerImpl) getPodsOwnedbyDs(ds *appsv1.DaemonSet, pods []corev1.Pod) []corev1.Pod {
+// GetPodsOwnedbyDs returns a list of the pods owned by the specified DaemonSet
+func (m *CommonUpgradeManagerImpl) GetPodsOwnedbyDs(ds *appsv1.DaemonSet, pods []corev1.Pod) []corev1.Pod {
 	dsPodList := []corev1.Pod{}
 	for i := range pods {
 		pod := &pods[i]
-		if isOrphanedPod(pod) {
+		if IsOrphanedPod(pod) {
 			m.Log.V(consts.LogLevelInfo).Info("Driver Pod has no owner DaemonSet", "pod", pod.Name)
 			continue
 		}
@@ -328,12 +256,12 @@ func (m *CommonUpgradeManagerImpl) getPodsOwnedbyDs(ds *appsv1.DaemonSet, pods [
 	return dsPodList
 }
 
-// getOrphanedPods returns a list of the pods not owned by any DaemonSet
-func (m *CommonUpgradeManagerImpl) getOrphanedPods(pods []corev1.Pod) []corev1.Pod {
+// GetOrphanedPods returns a list of the pods not owned by any DaemonSet
+func (m *CommonUpgradeManagerImpl) GetOrphanedPods(pods []corev1.Pod) []corev1.Pod {
 	podList := []corev1.Pod{}
 	for i := range pods {
 		pod := &pods[i]
-		if isOrphanedPod(pod) {
+		if IsOrphanedPod(pod) {
 			podList = append(podList, *pod)
 		}
 	}
@@ -341,7 +269,7 @@ func (m *CommonUpgradeManagerImpl) getOrphanedPods(pods []corev1.Pod) []corev1.P
 	return podList
 }
 
-func isOrphanedPod(pod *corev1.Pod) bool {
+func IsOrphanedPod(pod *corev1.Pod) bool {
 	return pod.OwnerReferences == nil || len(pod.OwnerReferences) < 1
 }
 
@@ -386,7 +314,7 @@ func (m *CommonUpgradeManagerImpl) ProcessDoneOrUnknownNodes(
 			err := m.NodeUpgradeStateProvider.ChangeNodeUpgradeState(ctx, nodeState.Node, UpgradeStateUpgradeRequired)
 			if err != nil {
 				m.Log.V(consts.LogLevelError).Error(
-					err, "Failed to change node upgrade state", "state", UpgradeStateUpgradeRequired)
+					err, "Failed to change node upgrade state", "state", UpgradeStateUpgradeRequired, "node:", nodeState.Node)
 				return err
 			}
 			m.Log.V(consts.LogLevelInfo).Info("Node requires upgrade, changed its state to UpgradeRequired",
