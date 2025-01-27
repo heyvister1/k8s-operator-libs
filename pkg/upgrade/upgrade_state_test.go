@@ -36,9 +36,9 @@ import (
 	maintenancev1alpha1 "github.com/Mellanox/maintenance-operator/api/v1alpha1"
 
 	v1alpha1 "github.com/NVIDIA/k8s-operator-libs/api/upgrade/v1alpha1"
+	upgrade "github.com/NVIDIA/k8s-operator-libs/pkg/upgrade"
 	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/base"
-	upgrade "github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/manager"
-	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/manager/mocks"
+	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/mocks"
 	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/requestor"
 )
 

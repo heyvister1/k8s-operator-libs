@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/base"
-	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/manager/mocks"
+	"github.com/NVIDIA/k8s-operator-libs/pkg/upgrade/mocks"
 	// +kubebuilder:scaffold:imports
 )
 

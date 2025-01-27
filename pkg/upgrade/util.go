@@ -37,3 +37,8 @@ func GetUpgradeSkipNodeLabelKey() string {
 func GetUpgradeRequestedAnnotationKey() string {
 	return base.GetUpgradeRequestedAnnotationKey()
 }
+
+// GetUpgradeDriverWaitForSafeLoadAnnotationKey is a wrapper to be used by external callers importing upgrade pkg
+func GetUpgradeDriverWaitForSafeLoadAnnotationKey() string {
+	return base.GetUpgradeDriverWaitForSafeLoadAnnotationKey()
+}
