@@ -69,6 +69,8 @@ func NewClusterUpgradeState() ClusterUpgradeState {
 type ProcessNodeStateManager interface {
 	ProcessUpgradeRequiredNodes(ctx context.Context,
 		currentClusterState *ClusterUpgradeState, upgradePolicy *v1alpha1.DriverUpgradePolicySpec) error
+	ProcessPostMaintenanceNodes(ctx context.Context,
+		currentClusterState *ClusterUpgradeState) error
 	ProcessUncordonRequiredNodes(
 		ctx context.Context, currentClusterState *ClusterUpgradeState) error
 }
@@ -507,7 +509,6 @@ func (m *CommonUpgradeManagerImpl) ProcessPodRestartNodes(
 
 	pods := make([]*corev1.Pod, 0, len(currentClusterState.NodeStates[UpgradeStatePodRestartRequired]))
 	for _, nodeState := range currentClusterState.NodeStates[UpgradeStatePodRestartRequired] {
-		m.Log.V(consts.LogLevelInfo).Info("[DEBUG]: ProcessPodRestartNodes")
 		isPodSynced, isOrphaned, err := m.podInSyncWithDS(ctx, nodeState)
 		if err != nil {
 			m.Log.V(consts.LogLevelError).Error(err, "Failed to get daemonset template/pod revision hash")
@@ -569,21 +570,6 @@ func (m *CommonUpgradeManagerImpl) ProcessPodRestartNodes(
 
 	// Create pod restart manager to handle pod restarts
 	return m.PodManager.SchedulePodsRestart(ctx, pods)
-}
-
-// ProcessPostMaintenanceNodes processes UpgradeStatePostMaintenanceRequired
-// by adding UpgradeStatePodRestartRequired under existing UpgradeStatePodRestartRequired nodes list.
-// the motivation is later to replace ProcessPodRestartNodes to a generic post node operation
-// while using maintenance operator (e.g. post-maintenance-required)
-func (m *CommonUpgradeManagerImpl) ProcessPostMaintenanceNodes(
-	currentClusterState *ClusterUpgradeState) error {
-	m.Log.V(consts.LogLevelInfo).Info("ProcessPostMaintenanceNodes")
-	currentClusterState.NodeStates[UpgradeStatePodRestartRequired] =
-		append(currentClusterState.NodeStates[UpgradeStatePodRestartRequired],
-			currentClusterState.NodeStates[UpgradeStatePostMaintenanceRequired]...)
-	// clear UpgradeStatePostMaintenanceRequired list once copied to ProcessPostMaintenanceNodes
-	currentClusterState.NodeStates[UpgradeStatePostMaintenanceRequired] = nil
-	return nil
 }
 
 // ProcessUpgradeFailedNodes processes UpgradeStateFailed nodes and checks whether the driver pod on the node

@@ -39,16 +39,17 @@ var (
 	defaultNodeMaintenance maintenancev1alpha1.NodeMaintenance
 )
 
-func SetDefaultNodeMaintenance(namespace, requestorID string, cordon bool,
+func SetDefaultNodeMaintenance(opts UpgradeRequestorQptions,
 	upgradePolicy *v1alpha1.DriverUpgradePolicySpec) {
 	drainSpec, podCompletion := convertV1Alpha1ToMaintenance(upgradePolicy)
+	drainSpec.PodEvictionFilters = opts.MaintenanceOPPodEvictionFilter
 	defaultNodeMaintenance = maintenancev1alpha1.NodeMaintenance{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
+			Namespace: opts.MaintenanceOPRequestorNS,
 		},
 		Spec: maintenancev1alpha1.NodeMaintenanceSpec{
-			RequestorID:          requestorID,
-			Cordon:               cordon,
+			RequestorID:          opts.MaintenanceOPRequestorID,
+			Cordon:               opts.MaintenanceOPRequestorCordon,
 			WaitForPodCompletion: podCompletion,
 			DrainSpec:            drainSpec,
 		},
@@ -104,12 +105,13 @@ func (m *UpgradeManagerImpl) GetNodeMaintenance(ctx context.Context,
 
 // DeleteNodeMaintenance requests to delete nodeMaintenance obj
 func (m *UpgradeManagerImpl) DeleteNodeMaintenance(ctx context.Context, nodeState *base.NodeUpgradeState) error {
-	curObj, err := validateNodeMaintenance(nodeState)
+	_, err := validateNodeMaintenance(nodeState)
 	if err != nil {
 		return err
 	}
 	nm := &maintenancev1alpha1.NodeMaintenance{}
-	err = m.K8sClient.Get(ctx, types.NamespacedName{Name: curObj.Name, Namespace: curObj.Namespace},
+	err = m.K8sClient.Get(ctx, types.NamespacedName{Name: nodeState.Node.Name,
+		Namespace: m.opts.MaintenanceOPRequestorNS},
 		nm, &client.GetOptions{})
 	if err != nil {
 		return err
@@ -122,6 +124,7 @@ func (m *UpgradeManagerImpl) DeleteNodeMaintenance(ctx context.Context, nodeStat
 	return nil
 }
 
+// TODO: Check if this is needed
 func validateNodeMaintenance(nodeState *base.NodeUpgradeState) (*maintenancev1alpha1.NodeMaintenance, error) {
 	if nodeState.NodeMaintenance == nil {
 		return nil, fmt.Errorf("missing nodeMaintenance for specified nodeUpgradeState. %v", nodeState)

@@ -71,7 +71,6 @@ func NewClusterUpgradeStateManager(
 	k8sConfig *rest.Config,
 	eventRecorder record.EventRecorder,
 	opts UpgradeStateOptions) (ClusterUpgradeStateManager, error) {
-	requestor.InitEnvs()
 
 	common, err := base.NewCommonUpgradeStateManager(log, k8sConfig, requestor.Scheme, eventRecorder)
 	if err != nil {
@@ -289,12 +288,10 @@ func (m *ClusterUpgradeStateManagerImpl) ApplyState(ctx context.Context,
 		return err
 	}
 
-	if m.opts.Requestor.UseMaintenanceOperator {
-		err = m.ProcessPostMaintenanceNodes(currentState)
-		if err != nil {
-			m.Log.V(consts.LogLevelError).Error(err, "Failed to schedule pods restart")
-			return err
-		}
+	err = m.ProcessPostMaintenanceNodesWrapper(ctx, currentState)
+	if err != nil {
+		m.Log.V(consts.LogLevelError).Error(err, "Failed for post maintneance")
+		return err
 	}
 
 	err = m.ProcessPodRestartNodes(ctx, currentState)
@@ -338,15 +335,28 @@ func (m *ClusterUpgradeStateManagerImpl) ProcessUpgradeRequiredNodesWrapper(ctx 
 	return err
 }
 
+func (m *ClusterUpgradeStateManagerImpl) ProcessPostMaintenanceNodesWrapper(ctx context.Context,
+	currentState *base.ClusterUpgradeState) error {
+	var err error
+	if m.opts.Requestor.UseMaintenanceOperator {
+		if err = m.requestor.ProcessPostMaintenanceNodes(ctx, currentState); err != nil {
+			return err
+		}
+	}
+	err = m.inplace.ProcessPostMaintenanceNodes(ctx, currentState)
+
+	return err
+}
+
 func (m *ClusterUpgradeStateManagerImpl) ProcessUncordonRequiredNodesWrapper(ctx context.Context,
 	currentState *base.ClusterUpgradeState) error {
 	var err error
 	if m.opts.Requestor.UseMaintenanceOperator {
-		err = m.requestor.ProcessUncordonRequiredNodes(ctx, currentState)
-	} else {
-		err = m.inplace.ProcessUncordonRequiredNodes(ctx, currentState)
+		if err = m.requestor.ProcessUncordonRequiredNodes(ctx, currentState); err != nil {
+			return err
+		}
 	}
+	err = m.inplace.ProcessUncordonRequiredNodes(ctx, currentState)
 
-	m.Log.V(consts.LogLevelError).Error(err, "Failed to uncordon nodes")
 	return err
 }

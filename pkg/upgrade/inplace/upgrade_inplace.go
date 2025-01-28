@@ -110,3 +110,9 @@ func (m *UpgradeManagerImpl) ProcessUpgradeRequiredNodes(
 
 	return nil
 }
+
+func (m *UpgradeManagerImpl) ProcessPostMaintenanceNodes(ctx context.Context,
+	currentClusterState *base.ClusterUpgradeState) error {
+	//TODO:
+	return nil
+}

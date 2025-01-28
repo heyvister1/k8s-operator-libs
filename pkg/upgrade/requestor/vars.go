@@ -18,18 +18,21 @@ package requestor
 
 import "os"
 
-// TODO: This should be move to requestor's context (user)
-func InitEnvs() {
+// GetRequestorEnvs returns requstor upgrade related options according to provided environment variables
+func GetRequestorOptsFromEnvs() UpgradeRequestorQptions {
+	opts := UpgradeRequestorQptions{}
 	if os.Getenv("MAINTENANCE_OPERATOR_ENABLED") == "true" {
-		//UseMaintenanceOperator = true
+		opts.UseMaintenanceOperator = true
 	}
 	if os.Getenv("MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE") != "" {
-		//MaintenanceOPRequestorNS = os.Getenv("MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE")
+		opts.MaintenanceOPRequestorNS = os.Getenv("MAINTENANCE_OPERATOR_REQUESTOR_NAMESPACE")
+	} else {
+		opts.MaintenanceOPRequestorNS = "default"
 	}
 	if os.Getenv("MAINTENANCE_OPERATOR_REQUESTOR_ID") != "" {
-		//MaintenanceOPRequestorID = os.Getenv("MAINTENANCE_OPERATOR_REQUESTOR_ID")
+		opts.MaintenanceOPRequestorID = os.Getenv("MAINTENANCE_OPERATOR_REQUESTOR_ID")
+	} else {
+		opts.MaintenanceOPRequestorID = MaintenanceOPDefaultRequestorID
 	}
-	if os.Getenv("MAINTENANCE_OPERATOR_POD_EVICTION_FILTERS") != "" {
-		//*MaintenanceOPPodEvictionFilter = os.Getenv("MAINTENANCE_OPERATOR_POD_EVICTION_FILTERS")
-	}
+	return opts
 }
