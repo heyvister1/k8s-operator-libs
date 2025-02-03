@@ -18,26 +18,19 @@ package requestor
 
 import (
 	"cmp"
-	"context"
 	"reflect"
 	"slices"
 
 	//nolint:depguard
 	maintenancev1alpha1 "github.com/Mellanox/maintenance-operator/api/v1alpha1"
 	"github.com/go-logr/logr"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/NVIDIA/k8s-operator-libs/pkg/consts"
 )
@@ -45,81 +38,10 @@ import (
 var Scheme = runtime.NewScheme()
 
 // NodeMaintenanceConditionReady designates maintenance operation completed for a designated node
-type NodeMaintenanceCondition struct {
-	// Node maintenance name
-	Name     string
-	NodeName string
-	// Node maintenance condition reason
-	Reason string
-}
-
-// NodeMaintenanceReconciler reconciles a NodeMaintenance object
-type NodeMaintenanceReconciler struct {
-	client.Client
-	Scheme   *runtime.Scheme
-	StatusCh chan NodeMaintenanceCondition
-}
-
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(Scheme))
 	utilruntime.Must(maintenancev1alpha1.AddToScheme(Scheme))
 	//+kubebuilder:scaffold:scheme
-}
-
-//nolint:dupl
-func (r *NodeMaintenanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	reqLog := log.FromContext(ctx)
-	reqLog.V(consts.LogLevelDebug).Info("reconcile NodeMaintenance request", req.Name, req.Namespace)
-
-	// get NodeMaintenance object
-	nm := &maintenancev1alpha1.NodeMaintenance{}
-	if err := r.Get(ctx, req.NamespacedName, nm); err != nil {
-		if k8serrors.IsNotFound(err) {
-			reqLog.Info("NodeMaintenance object not found, nothing to do.")
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
-
-	cond := meta.FindStatusCondition(nm.Status.Conditions, maintenancev1alpha1.ConditionReasonReady)
-	if cond != nil {
-		if len(nm.Finalizers) == 0 || !nm.GetDeletionTimestamp().IsZero() {
-			// object is being deleted
-			// TODO: wait for object deletion to update node uncodron is finished
-			reqLog.V(consts.LogLevelDebug).Info("node maintenance is beening deleted", nm.Name, nm.Spec.NodeName)
-			r.StatusCh <- NodeMaintenanceCondition{Name: nm.Name, NodeName: nm.Spec.NodeName, Reason: "deleting"}
-			return reconcile.Result{}, nil
-		}
-		reqLog.V(consts.LogLevelDebug).Info("node maintenance operation completed", nm.Spec.NodeName, cond.Reason)
-		if cond.Reason == maintenancev1alpha1.ConditionReasonReady ||
-			cond.Reason == maintenancev1alpha1.ConditionReasonFailedMaintenance {
-			//TODO: Add a channel to push node name + ready condition state
-			// Upgrade manager should wait for channel and update to UpgradeStatePodRestartRequired
-			r.StatusCh <- NodeMaintenanceCondition{Name: nm.Name, NodeName: nm.Spec.NodeName, Reason: cond.Reason}
-			return reconcile.Result{}, nil
-		}
-	}
-
-	if !nm.GetDeletionTimestamp().IsZero() {
-		// object is being deleted
-		// TODO: wait for object deletion to update node uncodron is finished
-		reqLog.V(consts.LogLevelDebug).Info("node maintenance is beening deleted", nm.Name, nm.Spec.NodeName)
-		r.StatusCh <- NodeMaintenanceCondition{Name: nm.Name, NodeName: nm.Spec.NodeName, Reason: "deleting"}
-		return reconcile.Result{}, nil
-	}
-
-	reqLog.V(consts.LogLevelWarning).Info("nothing todo, check why", nm.Name, nm.Spec.NodeName)
-
-	return reconcile.Result{}, nil
-}
-
-func (r *NodeMaintenanceReconciler) SetupWithManager(mgr ctrl.Manager, log logr.Logger, requestorID string) error {
-	log.V(consts.LogLevelInfo).Info("Started nodeMaintenance status manger")
-
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&maintenancev1alpha1.NodeMaintenance{}, builder.WithPredicates(NewConditionChangedPredicate(log, requestorID))).
-		Named(MaintenanceOPControllerName).
-		Complete(r)
 }
 
 // NewConditionChangedPredicate creates a new ConditionChangedPredicate
@@ -141,8 +63,6 @@ type ConditionChangedPredicate struct {
 // Update implements Predicate.
 func (p ConditionChangedPredicate) Update(e event.TypedUpdateEvent[client.Object]) bool {
 	p.log.V(consts.LogLevelDebug).Info("ConditionChangedPredicate Update event")
-
-	// TODO: Add predicate for specific (known) Requestor ID
 
 	if e.ObjectOld == nil {
 		p.log.Error(nil, "old object is nil in update event, ignoring event.")

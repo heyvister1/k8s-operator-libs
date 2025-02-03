@@ -36,14 +36,14 @@ import (
 )
 
 var (
-	defaultNodeMaintenance maintenancev1alpha1.NodeMaintenance
+	DefaultNodeMaintenance maintenancev1alpha1.NodeMaintenance
 )
 
 func SetDefaultNodeMaintenance(opts UpgradeRequestorQptions,
 	upgradePolicy *v1alpha1.DriverUpgradePolicySpec) {
 	drainSpec, podCompletion := convertV1Alpha1ToMaintenance(upgradePolicy)
 	drainSpec.PodEvictionFilters = opts.MaintenanceOPPodEvictionFilter
-	defaultNodeMaintenance = maintenancev1alpha1.NodeMaintenance{
+	DefaultNodeMaintenance = maintenancev1alpha1.NodeMaintenance{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: opts.MaintenanceOPRequestorNS,
 		},
@@ -57,7 +57,7 @@ func SetDefaultNodeMaintenance(opts UpgradeRequestorQptions,
 }
 
 func (m *UpgradeManagerImpl) NewNodeMaintenance(nodeName string) *maintenancev1alpha1.NodeMaintenance {
-	nm := defaultNodeMaintenance
+	nm := DefaultNodeMaintenance
 	nm.Name = nodeName
 	nm.Spec.NodeName = nodeName
 

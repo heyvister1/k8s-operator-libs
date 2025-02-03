@@ -76,7 +76,7 @@ func NewClusterUpgradeStateManager(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create common upgrade state manager. %v", err)
 	}
-	request, err := requestor.NewRequestorUpgradeManagerImpl(ctx, k8sConfig, common, opts.Requestor)
+	request, err := requestor.NewRequestorUpgradeManagerImpl(ctx, common, opts.Requestor)
 	if err != nil && err != requestor.ErrNodeMaintenanceUpgradeDisabled {
 		return nil, fmt.Errorf("failed to create requestor upgrade state manager. %v", err)
 	}

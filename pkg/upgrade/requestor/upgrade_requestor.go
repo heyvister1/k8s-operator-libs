@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	//nolint:depguard
 	maintenancev1alpha1 "github.com/Mellanox/maintenance-operator/api/v1alpha1"
@@ -32,11 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/rest"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 const (
@@ -65,69 +60,24 @@ type UpgradeRequestorQptions struct {
 // (e.g. maintenance OP) upgrade mode
 type UpgradeManagerImpl struct {
 	*base.CommonUpgradeManagerImpl
-	controllerManager manager.Manager
-	opts              UpgradeRequestorQptions
-	Reconciler        *NodeMaintenanceReconciler
-	Wg                *sync.WaitGroup
+	opts UpgradeRequestorQptions
 }
 
 // NewClusterUpgradeStateManager creates a new instance of UpgradeManagerImpl
 func NewRequestorUpgradeManagerImpl(
 	ctx context.Context,
-	k8sConfig *rest.Config,
 	common *base.CommonUpgradeManagerImpl,
 	opts UpgradeRequestorQptions) (base.ProcessNodeStateManager, error) {
 	if !opts.UseMaintenanceOperator {
 		common.Log.V(consts.LogLevelInfo).Info("node maintenance upgrade mode is disabled")
 		return nil, ErrNodeMaintenanceUpgradeDisabled
 	}
-	ctr, err := ctrl.NewManager(k8sConfig, ctrl.Options{
-		Scheme:         Scheme,
-		Metrics:        metricsserver.Options{BindAddress: "0"},
-		LeaderElection: false,
-	})
-	if err != nil {
-		common.Log.V(consts.LogLevelError).Error(err, "unable to create manager")
-		return nil, err
-	}
-	//reconciler := &NodeMaintenanceReconciler{
-	//	Client:   common.K8sClient,
-	//	Scheme:   ctr.GetScheme(),
-	//	StatusCh: make(chan NodeMaintenanceCondition, 1),
-	//}
-	//if err := reconciler.SetupWithManager(ctr, common.Log, opts.MaintenanceOPRequestorID); err != nil {
-	//	common.Log.V(consts.LogLevelError).Error(err, "unable to create controller", "controller", "NodeMaintenance")
-	//	return nil, err
-	//}
 	manager := &UpgradeManagerImpl{
 		opts:                     opts,
 		CommonUpgradeManagerImpl: common,
-		controllerManager:        ctr,
-		//Reconciler:               reconciler,
-		Wg: &sync.WaitGroup{},
 	}
-	// Starting nodeMaintenance reconciler for watching status change
-	//manager.Start(ctx)
 
 	return manager, nil
-}
-
-func (m *UpgradeManagerImpl) Start(ctx context.Context) {
-	m.Wg.Add(1)
-	go func() {
-		defer m.Wg.Done()
-		err := m.controllerManager.Start(ctx)
-		if err != nil {
-			m.Log.V(consts.LogLevelError).Error(err, "failed controller manager")
-		}
-	}()
-
-	go func() {
-		err := m.WatchNodeMaintenanceConditionChange(ctx)
-		if err != nil {
-			m.Log.V(consts.LogLevelWarning).Error(err, "failed to update node condition")
-		}
-	}()
 }
 
 // ProcessUpgradeRequiredNodes processes UpgradeStateUpgradeRequired nodes and moves them to UpgradeStateCordonRequired
@@ -251,53 +201,6 @@ func (m *UpgradeManagerImpl) SetUpgradeRequestorModeAnnotation(ctx context.Conte
 	m.Log.V(consts.LogLevelDebug).Info("Node annotated with upgrade-requestor-mode", "name", nodeName)
 
 	return nil
-}
-
-// WatchNodeMaintenanceConditionChange waits for nodeMaintenance status change by reconciler
-// in case of status change, fetch referenced node and update post maintenance state
-func (m *UpgradeManagerImpl) WatchNodeMaintenanceConditionChange(ctx context.Context) error {
-	m.Log.V(consts.LogLevelInfo).Info("starting node-maintenance condition change watcher")
-	for {
-		select {
-		case <-ctx.Done():
-			close(m.Reconciler.StatusCh)
-			m.Wg.Wait()
-			m.Log.V(consts.LogLevelInfo).Info("terminated controller manager")
-			return ctx.Err()
-		case cond, ok := <-m.Reconciler.StatusCh:
-			if !ok {
-				// Channel is closed
-				return nil
-			}
-			node, err := m.NodeUpgradeStateProvider.GetNode(ctx, cond.NodeName)
-			if err != nil {
-				m.Log.V(consts.LogLevelError).Error(err, "failed to find node")
-				continue
-			}
-			if cond.Reason == "deleting" {
-				//TODO: add handler func handleNodeMaintenanceDeletion(node)
-				upgradeStateLabel := base.GetUpgradeStateLabelKey()
-				m.Log.V(consts.LogLevelInfo).Info("handle NodeMaintenance deletion", node.Name, node.Labels[upgradeStateLabel])
-				if node.Labels[upgradeStateLabel] == base.UpgradeStateUncordonRequired {
-					err = m.NodeUpgradeStateProvider.ChangeNodeUpgradeState(ctx, node, base.UpgradeStateDone)
-					if err != nil {
-						m.Log.V(consts.LogLevelError).Error(err, "failed to update node state")
-						continue
-					}
-				}
-			}
-			// verify node maintenance operation completed
-			// node should enter post maintenance state
-			if cond.Reason == maintenancev1alpha1.ConditionReasonReady {
-				m.Log.V(consts.LogLevelDebug).Info("handle NodeMaintenance update", node.Name, cond.NodeName)
-				// update node state to 'post-maintenance-required'
-				err = m.NodeUpgradeStateProvider.ChangeNodeUpgradeState(ctx, node, base.UpgradeStatePostMaintenanceRequired)
-				if err != nil {
-					m.Log.V(consts.LogLevelError).Error(err, "failed to update node state")
-				}
-			}
-		}
-	}
 }
 
 // convertV1Alpha1ToMaintenance explicitly converts v1alpha1.DriverUpgradePolicySpec
