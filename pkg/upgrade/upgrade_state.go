@@ -281,15 +281,10 @@ func (m *ClusterUpgradeStateManagerImpl) ApplyState(ctx context.Context,
 
 	err = m.ProcessPostMaintenanceNodesWrapper(ctx, currentState)
 	if err != nil {
-		m.Log.V(consts.LogLevelError).Error(err, "Failed for post maintneance")
+		m.Log.V(consts.LogLevelError).Error(err, "Failed for post maintenance")
 		return err
 	}
 
-	err = m.ProcessPodRestartNodes(ctx, currentState)
-	if err != nil {
-		m.Log.V(consts.LogLevelError).Error(err, "Failed to schedule pods restart")
-		return err
-	}
 	err = m.ProcessUpgradeFailedNodes(ctx, currentState)
 	if err != nil {
 		m.Log.V(consts.LogLevelError).Error(err, "Failed to process nodes in 'upgrade-failed' state")

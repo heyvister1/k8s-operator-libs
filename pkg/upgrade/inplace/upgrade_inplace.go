@@ -113,9 +113,6 @@ func (m *UpgradeManagerImpl) ProcessUpgradeRequiredNodes(
 
 func (m *UpgradeManagerImpl) ProcessPostMaintenanceNodes(ctx context.Context,
 	currentClusterState *base.ClusterUpgradeState) error {
-	_ = ctx
-	_ = currentClusterState
-
-	// No-op implementation
-	return nil
+	// in future versions we'll remove 'pod-restart-required' and use 'post-maintenance-required' instead...
+	return m.ProcessPodRestartNodes(ctx, currentClusterState)
 }
