@@ -1370,6 +1370,63 @@ var _ = Describe("UpgradeStateManager tests", func() {
 		}).WithTimeout(10 * time.Second).WithPolling(1 * 500 * time.Millisecond).Should(Succeed())
 	})
 
+	It("UpgradeStateManager should not move to 'post-maintenance-required' while using upgrade requestor mode", func() {
+		namespace := createNamespace(fmt.Sprintf("namespace-%s", id)).Name
+		cancel := withUpgradeRequestorMode(ctx, namespace)
+		defer cancel()
+
+		clusterState := withClusterUpgradeState(1, base.UpgradeStateNodeMaintenanceRequired, namespace, nil, true)
+		policy := &v1alpha1.DriverUpgradePolicySpec{
+			AutoUpgrade: true,
+			DrainSpec: &v1alpha1.DrainSpec{
+				Enable: true,
+			},
+		}
+
+		// eventually wait for node to be created
+		node := &corev1.Node{}
+		Eventually(func() error {
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: "node-1", Namespace: namespace}, node)
+			if err != nil {
+				return err
+			}
+			return nil
+		}).WithTimeout(10 * time.Second).WithPolling(1 * 500 * time.Millisecond).Should(Succeed())
+
+		nmObj := &maintenancev1alpha1.NodeMaintenance{}
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: "node-1", Namespace: namespace}, nmObj)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verify node-maintenance obj(s) have been created")
+		nms := &maintenancev1alpha1.NodeMaintenanceList{}
+		Eventually(func() bool {
+			k8sClient.List(ctx, nms)
+			return len(nms.Items) == len(clusterState.NodeStates[base.UpgradeStateNodeMaintenanceRequired])
+		}).WithTimeout(10 * time.Second).WithPolling(1 * 500 * time.Millisecond).Should(BeTrue())
+		objMap, _ := convert.DefaultUnstructuredConverter.ToUnstructured(nms.Items[0])
+		clusterState.NodeStates[base.UpgradeStateNodeMaintenanceRequired][0].NodeMaintenance =
+			&unstructured.Unstructured{Object: objMap}
+
+		Expect(stateManagerInterface.ApplyState(ctx, &clusterState, policy)).To(Succeed())
+
+		By("verify node is in 'node-maintenance-required' state")
+		node = &corev1.Node{}
+		Eventually(func() error {
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: "node-1", Namespace: namespace}, node)
+			if err != nil {
+				return err
+			}
+			if getNodeUpgradeState(node) != base.UpgradeStateNodeMaintenanceRequired {
+				return fmt.Errorf("missing status condition")
+			}
+			return nil
+		}).WithTimeout(10 * time.Second).WithPolling(1 * 500 * time.Millisecond).Should(Succeed())
+
+		time.Sleep(10 * time.Second)
+		Expect(getNodeUpgradeState(node)).To(Equal(base.UpgradeStateNodeMaintenanceRequired))
+
+	})
+
 	It("UpgradeStateManager should move to 'post-maintenance-required' while using upgrade requestor mode", func() {
 		namespace := createNamespace(fmt.Sprintf("namespace-%s", id)).Name
 		cancel := withUpgradeRequestorMode(ctx, namespace)

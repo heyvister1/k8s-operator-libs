@@ -157,11 +157,6 @@ func (m *UpgradeManagerImpl) ProcessPostMaintenanceNodes(ctx context.Context,
 			}
 		}
 	}
-	currentClusterState.NodeStates[base.UpgradeStatePodRestartRequired] =
-		append(currentClusterState.NodeStates[base.UpgradeStatePodRestartRequired],
-			currentClusterState.NodeStates[base.UpgradeStateNodeMaintenanceRequired]...)
-	// clear UpgradeStateNodeMaintenanceRequired list once copied to ProcessPostMaintenanceNodes
-	currentClusterState.NodeStates[base.UpgradeStateNodeMaintenanceRequired] = nil
 
 	return nil
 }
